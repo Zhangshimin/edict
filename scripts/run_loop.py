@@ -142,8 +142,9 @@ def safe_run(script_name: str) -> None:
             log_line(f"完成执行: {script_path.name}")
     except subprocess.TimeoutExpired as e:
         if e.stdout:
+            timeout_output = e.stdout.decode("utf-8", errors="replace") if isinstance(e.stdout, (bytes, bytearray)) else str(e.stdout)
             with LOG.open("a", encoding="utf-8") as f:
-                f.write(e.stdout)
+                f.write(timeout_output)
         log_line(f"⚠️ 脚本超时({SCRIPT_TIMEOUT}s): {script_path.name}", also_console=True)
     except Exception as e:
         log_line(f"⚠️ 执行失败 {script_path.name}: {e}", also_console=True)
