@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """三省六部 · 跨平台数据刷新循环
 
 用法:
@@ -39,10 +40,18 @@ SCRIPTS = [
 ]
 
 
-def log_line(message: str) -> None:
+def console(message: str) -> None:
+    print(message, flush=True)
+
+
+def log_line(message: str, also_console: bool = False) -> None:
     timestamp = time.strftime("%H:%M:%S")
+    line = f"{timestamp} [loop] {message}"
+    LOG.parent.mkdir(parents=True, exist_ok=True)
     with LOG.open("a", encoding="utf-8") as f:
-        f.write(f"{timestamp} [loop] {message}\n")
+        f.write(line + "\n")
+    if also_console:
+        console(line)
 
 
 def rotate_log() -> None:
@@ -56,12 +65,27 @@ def rotate_log() -> None:
 
 
 def cleanup(*_args: object) -> None:
-    log_line("收到退出信号，清理中...")
+    try:
+        log_line("收到退出信号，清理中...", also_console=True)
+    except Exception:
+        pass
     try:
         if PIDFILE.exists():
             PIDFILE.unlink()
     finally:
         raise SystemExit(0)
+
+
+def pid_exists_windows(pid: int) -> bool:
+    result = subprocess.run(
+        ["tasklist", "/FI", f"PID eq {pid}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    return str(pid) in result.stdout
 
 
 def ensure_single_instance() -> None:
@@ -73,31 +97,13 @@ def ensure_single_instance() -> None:
 
         if old_pid:
             try:
-                if os.name == "nt":
-                    subprocess.run(
-                        ["tasklist", "/FI", f"PID eq {old_pid}"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL,
-                        text=True,
-                        check=False,
-                    )
-                    out = subprocess.run(
-                        ["tasklist", "/FI", f"PID eq {old_pid}"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL,
-                        text=True,
-                        check=False,
-                    ).stdout
-                    if str(old_pid) in out:
-                        print(f"❌ 已有实例运行中 (PID={old_pid})，退出")
-                        raise SystemExit(1)
-                else:
+                running = pid_exists_windows(old_pid) if os.name == "nt" else True
+                if os.name != "nt":
                     os.kill(old_pid, 0)
-                    print(f"❌ 已有实例运行中 (PID={old_pid})，退出")
+                if running:
+                    console(f"❌ 已有实例运行中 (PID={old_pid})，退出")
                     raise SystemExit(1)
             except OSError:
-                pass
-            except Exception:
                 pass
 
         try:
@@ -111,10 +117,11 @@ def ensure_single_instance() -> None:
 def safe_run(script_name: str) -> None:
     script_path = SCRIPT_DIR / script_name
     if not script_path.exists():
-        log_line(f"⚠️ 缺少脚本: {script_path}")
+        log_line(f"⚠️ 缺少脚本: {script_path}", also_console=True)
         return
 
     cmd = [sys.executable, str(script_path)]
+    log_line(f"开始执行: {script_path.name}", also_console=True)
     try:
         result = subprocess.run(
             cmd,
@@ -130,14 +137,16 @@ def safe_run(script_name: str) -> None:
             with LOG.open("a", encoding="utf-8") as f:
                 f.write(result.stdout)
         if result.returncode != 0:
-            log_line(f"⚠️ 脚本返回非零退出码({result.returncode}): {script_path.name}")
+            log_line(f"⚠️ 脚本返回非零退出码({result.returncode}): {script_path.name}", also_console=True)
+        else:
+            log_line(f"完成执行: {script_path.name}")
     except subprocess.TimeoutExpired as e:
         if e.stdout:
             with LOG.open("a", encoding="utf-8") as f:
                 f.write(e.stdout)
-        log_line(f"⚠️ 脚本超时({SCRIPT_TIMEOUT}s): {script_path.name}")
+        log_line(f"⚠️ 脚本超时({SCRIPT_TIMEOUT}s): {script_path.name}", also_console=True)
     except Exception as e:
-        log_line(f"⚠️ 执行失败 {script_path.name}: {e}")
+        log_line(f"⚠️ 执行失败 {script_path.name}: {e}", also_console=True)
 
 
 def scheduler_scan() -> None:
@@ -153,35 +162,56 @@ def scheduler_scan() -> None:
             if body:
                 with LOG.open("a", encoding="utf-8") as f:
                     f.write(body + "\n")
+        log_line("完成 scheduler-scan")
     except Exception as e:
-        log_line(f"scheduler-scan 调用失败: {e}")
+        log_line(f"scheduler-scan 调用失败: {e}", also_console=True)
 
 
-ensure_single_instance()
-atexit.register(lambda: PIDFILE.exists() and PIDFILE.unlink())
-if hasattr(signal, "SIGINT"):
-    signal.signal(signal.SIGINT, cleanup)
-if hasattr(signal, "SIGTERM"):
-    signal.signal(signal.SIGTERM, cleanup)
+def main() -> None:
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    LOG.touch(exist_ok=True)
+    ensure_single_instance()
+    atexit.register(lambda: PIDFILE.exists() and PIDFILE.unlink())
 
-print(f"🏛️  三省六部数据刷新循环启动 (PID={os.getpid()})")
-print(f"   脚本目录: {SCRIPT_DIR}")
-print(f"   间隔: {INTERVAL}s")
-print(f"   巡检间隔: {SCAN_INTERVAL}s")
-print(f"   脚本超时: {SCRIPT_TIMEOUT}s")
-print(f"   日志: {LOG}")
-print(f"   PID文件: {PIDFILE}")
-print("   按 Ctrl+C 停止")
+    if hasattr(signal, "SIGINT"):
+        signal.signal(signal.SIGINT, cleanup)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, cleanup)
 
-scan_counter = 0
-while True:
-    rotate_log()
-    for script in SCRIPTS:
-        safe_run(script)
+    console(f"🏛️  三省六部数据刷新循环启动 (PID={os.getpid()})")
+    console(f"   脚本目录: {SCRIPT_DIR}")
+    console(f"   间隔: {INTERVAL}s")
+    console(f"   巡检间隔: {SCAN_INTERVAL}s")
+    console(f"   脚本超时: {SCRIPT_TIMEOUT}s")
+    console(f"   日志: {LOG}")
+    console(f"   PID文件: {PIDFILE}")
+    console("   按 Ctrl+C 停止")
 
-    scan_counter += INTERVAL
-    if scan_counter >= SCAN_INTERVAL:
-        scan_counter = 0
-        scheduler_scan()
+    log_line("刷新循环已启动")
 
-    time.sleep(INTERVAL)
+    scan_counter = 0
+    while True:
+        rotate_log()
+        for script in SCRIPTS:
+            safe_run(script)
+
+        scan_counter += INTERVAL
+        if scan_counter >= SCAN_INTERVAL:
+            scan_counter = 0
+            scheduler_scan()
+
+        time.sleep(INTERVAL)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as e:
+        console(f"❌ run_loop.py 启动失败: {e}")
+        try:
+            log_line(f"启动失败: {e}", also_console=False)
+        except Exception:
+            pass
+        raise
