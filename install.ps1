@@ -1,4 +1,4 @@
-# ══════════════════════════════════════════════════════════════
+﻿# ══════════════════════════════════════════════════════════════
 # 三省六部 · OpenClaw Multi-Agent System 一键安装脚本 (Windows)
 # PowerShell 版本 — 对应 install.sh
 # ══════════════════════════════════════════════════════════════
@@ -12,18 +12,33 @@ $OC_CFG = Join-Path $OC_HOME "openclaw.json"
 function Write-Banner {
     Write-Host ""
     Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Blue
-    Write-Host "║  🏛️  三省六部 · OpenClaw Multi-Agent     ║" -ForegroundColor Blue
+    Write-Host "║  三省六部 · OpenClaw Multi-Agent     ║" -ForegroundColor Blue
     Write-Host "║       安装向导 (Windows)                  ║" -ForegroundColor Blue
     Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Blue
     Write-Host ""
 }
 
-function Log   { param($msg) Write-Host "✅ $msg" -ForegroundColor Green }
-function Warn  { param($msg) Write-Host "⚠️  $msg" -ForegroundColor Yellow }
-function Error { param($msg) Write-Host "❌ $msg" -ForegroundColor Red }
-function Info  { param($msg) Write-Host "ℹ️  $msg" -ForegroundColor Blue }
+function Log   { param($msg) Write-Host "[OK] $msg" -ForegroundColor Green }
+function Warn  { param($msg) Write-Host "[WARN] $msg" -ForegroundColor Yellow }
+function Error { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
+function Info  { param($msg) Write-Host "[INFO] $msg" -ForegroundColor Blue }
 
-# ── Step 0: 依赖检查 ──
+function Write-Utf8File {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Content
+    )
+
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+}
+
+# Step 0: 依赖检查
 function Check-Deps {
     Info "检查依赖..."
 
@@ -52,7 +67,7 @@ function Check-Deps {
     Log "openclaw.json: $OC_CFG"
 }
 
-# ── Step 0.5: 备份已有 Agent 数据 ──
+# Step 0.5: 备份已有 Agent 数据
 function Backup-Existing {
     $hasExisting = Get-ChildItem -Path $OC_HOME -Directory -Filter "workspace-*" -ErrorAction SilentlyContinue
     if ($hasExisting) {
@@ -72,7 +87,7 @@ function Backup-Existing {
     }
 }
 
-# ── Step 1: 创建 Workspace ──
+# Step 1: 创建 Workspace
 function Create-Workspaces {
     Info "创建 Agent Workspace..."
 
@@ -87,27 +102,47 @@ function Create-Workspaces {
             if (Test-Path $soulDst) {
                 $ts = Get-Date -Format "yyyyMMdd-HHmmss"
                 Copy-Item $soulDst "$soulDst.bak.$ts"
-                Warn "已备份旧 SOUL.md → $soulDst.bak.$ts"
+                Warn "已备份旧 SOUL.md -> $soulDst.bak.$ts"
             }
-            $content = (Get-Content $soulSrc -Raw) -replace "__REPO_DIR__", $REPO_DIR
-            Set-Content -Path $soulDst -Value $content -Encoding UTF8
+            $content = (Get-Content -Path $soulSrc -Raw -Encoding UTF8) -replace "__REPO_DIR__", $REPO_DIR
+            Write-Utf8File -Path $soulDst -Content $content
         }
         Log "Workspace 已创建: $ws"
 
         # AGENTS.md
         $agentsMd = @"
-# AGENTS.md · 工作协议
+# AGENTS.md - 工作协议
 
 1. 接到任务先回复"已接旨"。
 2. 输出必须包含：任务ID、结果、证据/文件路径、阻塞项。
 3. 需要协作时，回复尚书省请求转派，不跨部直连。
 4. 涉及删除/外发动作必须明确标注并等待批准。
 "@
-        Set-Content -Path (Join-Path $ws "AGENTS.md") -Value $agentsMd -Encoding UTF8
+        Write-Utf8File -Path (Join-Path $ws "AGENTS.md") -Content $agentsMd
     }
 }
 
-# ── Step 2: 注册 Agents ──
+# Step 1.5: 强制重建所有 SOUL.md（统一 UTF-8）
+function Rebuild-Souls {
+    Info "重新覆盖生成所有 SOUL.md（UTF-8）..."
+
+    $agents = @("taizi","zhongshu","menxia","shangshu","hubu","libu","bingbu","xingbu","gongbu","libu_hr","zaochao")
+    foreach ($agent in $agents) {
+        $soulSrc = Join-Path $REPO_DIR "agents\$agent\SOUL.md"
+        $soulDst = Join-Path (Join-Path $OC_HOME "workspace-$agent") "SOUL.md"
+
+        if (-not (Test-Path $soulSrc)) {
+            Warn "缺少 SOUL 模板: $soulSrc"
+            continue
+        }
+
+        $content = (Get-Content -Path $soulSrc -Raw -Encoding UTF8) -replace "__REPO_DIR__", $REPO_DIR
+        Write-Utf8File -Path $soulDst -Content $content
+        Log "已重建: $soulDst"
+    }
+}
+
+# Step 2: 注册 Agents
 function Register-Agents {
     Info "注册三省六部 Agents..."
 
@@ -168,7 +203,7 @@ print(f'Done: {added} agents added')
     Log "Agents 注册完成"
 }
 
-# ── Step 3: 初始化 Data ──
+# Step 3: 初始化 Data
 function Init-Data {
     Info "初始化数据目录..."
     $dataDir = Join-Path $REPO_DIR "data"
@@ -182,7 +217,7 @@ function Init-Data {
     Log "数据目录初始化完成"
 }
 
-# ── Step 3.3: 创建 data/scripts 目录连接 (Junction) ──
+# Step 3.3: 创建 data/scripts 目录连接 (Junction)
 function Link-Resources {
     Info "创建 data/scripts 目录连接..."
     $linked = 0
@@ -217,10 +252,10 @@ function Link-Resources {
             $linked++
         }
     }
-    Log "已创建 $linked 个目录连接 (data/scripts → 项目目录)"
+    Log "已创建 $linked 个目录连接 (data/scripts -> 项目目录)"
 }
 
-# ── Step 3.5: 设置 Agent 间通信可见性 ──
+# Step 3.5: 设置 Agent 间通信可见性
 function Setup-Visibility {
     Info "配置 Agent 间消息可见性..."
     try {
@@ -231,7 +266,7 @@ function Setup-Visibility {
     }
 }
 
-# ── Step 4: 构建前端 ──
+# Step 4: 构建前端
 function Build-Frontend {
     Info "构建 React 前端..."
     $node = Get-Command node -ErrorAction SilentlyContinue
@@ -255,7 +290,7 @@ function Build-Frontend {
     }
 }
 
-# ── Step 5: 首次数据同步 ──
+# Step 5: 首次数据同步
 function First-Sync {
     Info "执行首次数据同步..."
     Push-Location $REPO_DIR
@@ -267,7 +302,7 @@ function First-Sync {
     Log "首次同步完成"
 }
 
-# ── Step 6: 重启 Gateway ──
+# Step 6: 重启 Gateway
 function Restart-Gateway {
     Info "重启 OpenClaw Gateway..."
     try {
@@ -278,11 +313,12 @@ function Restart-Gateway {
     }
 }
 
-# ── Main ──
+# Main
 Write-Banner
 Check-Deps
 Backup-Existing
 Create-Workspaces
+Rebuild-Souls
 Register-Agents
 Init-Data
 Link-Resources
@@ -292,14 +328,22 @@ First-Sync
 Restart-Gateway
 
 Write-Host ""
-Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║  🎉  三省六部安装完成！                          ║" -ForegroundColor Green
-Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Green
+Write-Host "  三省六部安装完成！" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "下一步："
 Write-Host "  1. 配置 API Key（如尚未配置）:"
 Write-Host "     openclaw agents add taizi     # 按提示输入 Anthropic API Key"
 Write-Host "     .\install.ps1                 # 重新运行以同步到所有 Agent"
+Write-Host "  2. 启动数据刷新循环:  Start-Process python3 -ArgumentList 'scripts/run_loop.sh'"
+Write-Host "  3. 启动看板服务器:    python3 dashboard/server.py"
+Write-Host "  4. 打开看板:          http://127.0.0.1:7891"
+Write-Host ""
+Warn "首次安装必须配置 API Key，否则 Agent 会报错"
+Info "文档: docs/getting-started.md"
+/getting-started.md"
+ite-Host "     .\install.ps1                 # 重新运行以同步到所有 Agent"
 Write-Host "  2. 启动数据刷新循环:  Start-Process python3 -ArgumentList 'scripts/run_loop.sh'"
 Write-Host "  3. 启动看板服务器:    python3 dashboard/server.py"
 Write-Host "  4. 打开看板:          http://127.0.0.1:7891"
