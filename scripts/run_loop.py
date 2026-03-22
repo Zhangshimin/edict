@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""三省六部 · 跨平台数据刷新循环
-
-用法:
-  python scripts/run_loop.py [间隔秒数] [巡检间隔秒数]
-
-参数:
-  间隔秒数: 数据刷新频率，默认 15 秒
-  巡检间隔秒数: 自动重试卡住任务的频率，默认 120 秒
-"""
+"""三省六部 · 跨平台数据刷新循环"""
 from __future__ import annotations
 
 import atexit
@@ -25,7 +17,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 INTERVAL = int(sys.argv[1]) if len(sys.argv) > 1 else 15
 SCAN_INTERVAL = int(sys.argv[2]) if len(sys.argv) > 2 else 120
 SCRIPT_TIMEOUT = 30
-MAX_LOG_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_LOG_SIZE = 10 * 1024 * 1024
 
 RUNTIME_DIR = Path(tempfile.gettempdir())
 LOG = RUNTIME_DIR / "sansheng_liubu_refresh.log"
@@ -44,14 +36,30 @@ def console(message: str) -> None:
     print(message, flush=True)
 
 
-def log_line(message: str, also_console: bool = False) -> None:
-    timestamp = time.strftime("%H:%M:%S")
-    line = f"{timestamp} [loop] {message}"
+def append_log(text: str) -> None:
     LOG.parent.mkdir(parents=True, exist_ok=True)
     with LOG.open("a", encoding="utf-8") as f:
-        f.write(line + "\n")
+        f.write(text)
+
+
+def log_line(message: str, also_console: bool = False) -> None:
+    line = f"{time.strftime('%H:%M:%S')} [loop] {message}\n"
+    append_log(line)
     if also_console:
-        console(line)
+        console(line.rstrip())
+
+
+def decode_output(data: bytes | str | None) -> str:
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    for enc in ("utf-8", "gb18030", "cp936", sys.getdefaultencoding()):
+        try:
+            return data.decode(enc)
+        except Exception:
+            pass
+    return data.decode("utf-8", errors="replace")
 
 
 def rotate_log() -> None:
@@ -60,19 +68,18 @@ def rotate_log() -> None:
         if backup.exists():
             backup.unlink()
         LOG.replace(backup)
-        with LOG.open("w", encoding="utf-8") as f:
-            f.write(f"{time.strftime('%H:%M:%S')} [loop] 日志已轮转\n")
+        append_log(f"{time.strftime('%H:%M:%S')} [loop] 日志已轮转\n")
 
 
 def cleanup(*_args: object) -> None:
     try:
         log_line("收到退出信号，清理中...", also_console=True)
-    except Exception:
-        pass
-    try:
-        if PIDFILE.exists():
-            PIDFILE.unlink()
     finally:
+        try:
+            if PIDFILE.exists():
+                PIDFILE.unlink()
+        except Exception:
+            pass
         raise SystemExit(0)
 
 
@@ -81,11 +88,9 @@ def pid_exists_windows(pid: int) -> bool:
         ["tasklist", "/FI", f"PID eq {pid}"],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
         check=False,
     )
-    return str(pid) in result.stdout
+    return str(pid).encode() in result.stdout
 
 
 def ensure_single_instance() -> None:
@@ -128,23 +133,20 @@ def safe_run(script_name: str) -> None:
             cwd=str(SCRIPT_DIR.parent),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
             timeout=SCRIPT_TIMEOUT,
             check=False,
         )
-        if result.stdout:
-            with LOG.open("a", encoding="utf-8") as f:
-                f.write(result.stdout)
+        output = decode_output(result.stdout)
+        if output:
+            append_log(output)
         if result.returncode != 0:
             log_line(f"⚠️ 脚本返回非零退出码({result.returncode}): {script_path.name}", also_console=True)
         else:
             log_line(f"完成执行: {script_path.name}")
     except subprocess.TimeoutExpired as e:
-        if e.stdout:
-            timeout_output = e.stdout.decode("utf-8", errors="replace") if isinstance(e.stdout, (bytes, bytearray)) else str(e.stdout)
-            with LOG.open("a", encoding="utf-8") as f:
-                f.write(timeout_output)
+        output = decode_output(e.stdout)
+        if output:
+            append_log(output)
         log_line(f"⚠️ 脚本超时({SCRIPT_TIMEOUT}s): {script_path.name}", also_console=True)
     except Exception as e:
         log_line(f"⚠️ 执行失败 {script_path.name}: {e}", also_console=True)
@@ -159,10 +161,10 @@ def scheduler_scan() -> None:
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            if body:
-                with LOG.open("a", encoding="utf-8") as f:
-                    f.write(body + "\n")
+            body = resp.read()
+        output = decode_output(body)
+        if output:
+            append_log(output + "\n")
         log_line("完成 scheduler-scan")
     except Exception as e:
         log_line(f"scheduler-scan 调用失败: {e}", also_console=True)
@@ -212,7 +214,7 @@ if __name__ == "__main__":
     except Exception as e:
         console(f"❌ run_loop.py 启动失败: {e}")
         try:
-            log_line(f"启动失败: {e}", also_console=False)
+            log_line(f"启动失败: {e}")
         except Exception:
             pass
         raise
