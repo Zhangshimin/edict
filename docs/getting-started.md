@@ -56,6 +56,8 @@ openclaw channels add --type feishu --agent taizi
 
 ## 第四步：启动服务
 
+### macOS / Linux
+
 ```bash
 # 终端 1：数据刷新循环（每 15 秒同步）
 bash scripts/run_loop.sh
@@ -69,7 +71,24 @@ open http://127.0.0.1:7891
 
 > 💡 **提示**：`run_loop.sh` 每 15 秒自动同步数据。可用 `&` 后台运行。
 
+### Windows
+
+```powershell
+# 终端 1：数据刷新循环（跨平台 Python 版本）
+python scripts/run_loop.py
+
+# 终端 2：看板服务器
+python dashboard/server.py
+
+# 浏览器打开
+start http://127.0.0.1:7891
+```
+
+> 💡 Windows 下请优先使用 `install.ps1` 和 `scripts/run_loop.py`，不要直接把 `run_loop.sh` 当作 Python 脚本启动。
+
 > 💡 **看板即开即用**：`server.py` 内嵌 `dashboard/dashboard.html`，无需额外构建。Docker 镜像包含预构建的 React 前端。
+
+> 💡 详细 Windows 用法请看 [Windows 使用说明](windows-usage.md)
 
 ## 第五步：发送第一道旨意
 
