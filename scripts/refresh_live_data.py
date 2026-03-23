@@ -11,11 +11,31 @@ DATA = BASE / 'data'
 
 
 def output_meta(path):
-    p = pathlib.Path(path)
-    if not p.exists():
+    if not isinstance(path, str):
         return {"exists": False, "lastModified": None}
-    ts = datetime.datetime.fromtimestamp(p.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-    return {"exists": True, "lastModified": ts}
+
+    candidate = path.strip()
+    if not candidate or len(candidate) > 240:
+        return {"exists": False, "lastModified": None}
+
+    # 仅当 output 明显像文件路径时才尝试 stat，避免把长文本成果误判为路径。
+    looks_like_path = (
+        candidate.startswith(('/', './', '../', '~/'))
+        or '/' in candidate
+        or '\\' in candidate
+        or pathlib.Path(candidate).suffix != ''
+    )
+    if not looks_like_path:
+        return {"exists": False, "lastModified": None}
+
+    try:
+        p = pathlib.Path(candidate).expanduser()
+        if not p.exists():
+            return {"exists": False, "lastModified": None}
+        ts = datetime.datetime.fromtimestamp(p.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        return {"exists": True, "lastModified": ts}
+    except OSError:
+        return {"exists": False, "lastModified": None}
 
 
 def main():
